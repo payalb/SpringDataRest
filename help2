@@ -1,0 +1,318 @@
+Hateoas API with powerful search in 15 minutes using Spring and Elasticsearch
+Sometimes you don’t want to spend hours building up a simple CRUD API just to power a proof of concept client or to support a demo. There are lots of tools to bootstrap a quick API but those that allow to do so with minimal configuration are rare. If on top of that you aim to have at least some advanced search capabilities with paging, you’re left with almost nothing. Today we will build a simple API that allows us to build a movie database and search through it. Our REST API will be built using `spring-boot`, `spring-data-rest` and `spring-data-elasticsearch` to provide us the storage and search features we are looking for.
+
+This walkthrough is targeted at developers with at least some knowledge of Java along with Maven or Gradle. Knowing about Spring is not mandatory but it is recommend to learn a bit about it before going further.
+
+At any time you can refer to the sample project available on GitHub.
+
+1. Create project
+While you can create the project manually, in order to be ready ASAP we will use the spring initializr project to do it for us.
+
+Go to https://start.spring.io
+Select the following dependencies: Rest repositories and Elasticsearch
+Generate project to download files
+Extract the downloaded archive and import the project into your IDE
+Run the project
+If everything went fine, you should end up with following lines in your output:
+
+
+By looking at the logs you can see that an Elasticsearch server has been started internally. That is the default behavior if you do not specify remote connection information in application properties. For this demo we will continue with the embedded version.
+Also one can notice that a couple of mappings for traditional CRUD operations have been created by spring-data-rest, calling them will have no effect unless we create persisted domain entities but the API is already available even if nothing is available.
+
+$ curl http://localhost:8080
+{
+    "_links" : {
+        "profile" : {
+          "href" : "http://localhost:8080/profile"
+        }
+    }
+}
+Note: you may have the following exception in the logs java.lang.ClassNotFoundException: com.sun.jna.Native. This is not critical and you can ignore it. Adding logging.level.org.elasticsearch.bootstrap: ERROR inresources/application.properties can also hide it.
+
+2. Setup domain entity
+We want to manage movies so let’s start to create our entity class to represent a movie.
+
+public class Movie {
+    private String id;
+    private String title;
+    private int budget;
+    private String overview;
+    private Set<String> genres;
+    private Set<String> keywords;
+    
+    // you can have any constructor you want but for
+    // persistence you need a default one (can be private)
+    public Movie() {
+    }
+    // getters and setters
+}
+That is our domain entity that we are going to persist in Elasticsearch. To instruct spring-data-elasticsearch how to persist a movie we have to add annotations.
+
+@Document(indexName = "movies")
+public class Movie {
+    @Id
+    private String id;
+    @Field
+    private String title;
+    @Field
+    private int budget;
+    @Field
+    private String overview;
+    @Field
+    private Set<String> genres;
+    @Field
+    private Set<String> keywords;
+    (...)
+}
+Those annotations should be straightforward, we say that we have a document being stored in the Elasticsearch index movies, which has an @Id field called id and 5 data @Field properties of various types. Standard types are recognised and handled natively by spring-data-elasticsearch. Complex types can be handled too with some other annotations or ultimately by providing your own marshallers.
+
+Note: be sur to define getters at least because all defaults object mappers (to persist your objects in Elasticsearch and to return them as JSON for API responses) are configured to use them. Therefore if you do not add getters our data may be stored incorrectly and also be hidden in responses. These mechanisms can be configured at will but that is not part of this tutorial.
+
+Last step to have our API is to provide spring-data-rest a repository against which to retrieve and store our Elasticsearch entity.
+
+3. Setup repository
+spring-data has the ability to generate implementations for provided repository interfaces at runtime. I will not detail in depth those mechanisms but you can find more about them on the project’s website. So let’s create our repository interface and call it MovieRepository. Since we are going to store our entities into elasticsearch we can extend from ElasticsearchRepository, this is a generic interface that takes the target entity class (in our case Movie) and the type of the id field (String) as parameters. Also in order to have that interface being implemented at runtime by spring-data-rest we need to annotate it with @RepositoryRestResource annotation.
+
+
+Annotation parameters tell spring-rest what the rel name for HATEOAS links is, and the path URI wise on which this repository is mapped. If you restart the application you should now be able to proceed with any CRUD methods you want on /movies endpoint.
+
+$ curl -X POST \
+    -d '{"id":42,"title":"Hello world"}' \
+    -H 'Content-Type: application/json' \
+    http://localhost:8080/movies
+{
+  "title" : "Hello world",
+  "budget" : 0,
+  "overview" : null,
+  "genres" : null,
+  "keywords" : null,
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/movies/42"
+    },
+    "movie" : {
+      "href" : "http://localhost:8080/movies/42"
+    }
+  }
+}
+$ curl http://localhost:8080/movies/42
+{
+  "title" : "Hello world",
+  "budget" : 0,
+  "overview" : null,
+  "genres" : null,
+  "keywords" : null,
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/movies/42"
+    },
+    "movie" : {
+      "href" : "http://localhost:8080/movies/42"
+    }
+  }
+}
+$ curl http://localhost:8080/movies/
+{
+  "_embedded" : {
+    "movies" : [ {
+      "title" : "Hello world",
+      "budget" : 0,
+      "overview" : null,
+      "genres" : null,
+      "keywords" : null,
+      "_links" : {
+        "self" : {
+          "href" : "http://localhost:8080/movies/42"
+        },
+        "movie" : {
+          "href" : "http://localhost:8080/movies/42"
+        }
+      }
+    } ]
+  },
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/movies{?page,size,sort}",
+      "templated" : true
+    },
+    "profile" : {
+      "href" : "http://localhost:8080/profile/movies"
+    }
+  },
+  "page" : {
+    "size" : 20,
+    "totalElements" : 1,
+    "totalPages" : 1,
+    "number" : 0
+  }
+} 
+$ curl -X DELETE http://localhost:8080/movies/42
+200 OK
+As you can see, all endpoints are available. You can list movies with paging and sorting and also everything have hypermedia links (HATEOAS). You can have the list of endpoints available and their parameters simply by walking the API from the root. Now that we have our basic CRUD application we want to add our needed search features.
+
+4. Searching by titles
+One of the biggest features of spring-data-rest is that it can provide, at runtime, implementations for your repository interfaces, but that also applies to your custom methods ! For example if you add
+
+Page<Movie> findByTitle(@Param("title") String title,
+                                               Pageable pageable)
+then spring-data will generate the implementation for you to retrieve movies based on their title (parameter name should match property name in entity class). On top of that, spring-data-rest will go even further by also providing the endpoints to use such methods. So let’s add that method to our repository.
+
+After restarting the application you can now do the following request:
+
+$ curl http://localhost:8080/movies/search/findByTitle?title=hello
+{
+  "_embedded" : {
+    "movies" : [ {
+      "title" : "Hello world",
+      "budget" : 0,
+      "overview" : null,
+      "genres" : null,
+      "keywords" : null,
+      "_links" : {
+        "self" : {
+          "href" : "http://localhost:8080/movies/42"
+        },
+        "movie" : {
+          "href" : "http://localhost:8080/movies/42"
+        }
+      }
+    } ]
+  },
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/movies/search/findByTitle?title=hello&page=0&size=20"
+    }
+  },
+  "page" : {
+    "size" : 20,
+    "totalElements" : 1,
+    "totalPages" : 1,
+    "number" : 0
+  }
+}
+You can also rename the method to title as that will lead to a better API endpoint name ie. /movies/search/title. Beware that searches are processed by Elasticsearch directly so Lucene syntax applies. For example searching for title=hel will return nothing because ES only knows about hello or world terms. You can instead use title=hel*
+
+5. Full featured search
+We have seen how easily methods could be added and accessed by clients, but now we want to get power from elasticsearch and be able to actually search for various criterias on all fields. To do so we are out of the scope of generated methods and mappings, we need to manually add a custom endpoint taking a lucene query (string) as input and forward it to elasticsearch. We also want to keep full featured HATEOAS links and paging.
+
+First, we need to add a custom REST controller providing our endpoint
+
+
+Since spring-data-rest creates an implementation of our MovieRepository we can inject it into our controller and use it to execute the query.
+
+
+$ curl http://localhost:8080/movies/search/query?q=*
+[
+    {
+      "id" : "42",
+      "title" : "Hello world",
+      "budget" : 0,
+      "overview" : null,
+      "genres" : null,
+      "keywords" : null
+    }
+]
+At this point you may want to inject some real data, you can do it by hand but to speed things up you can use data provided with sample project on GitHub. If you want to use the populate.sh script be sure to install jq first. Here is an example of request you can do on that data set:
+
+Searching for all titles containing men or dog terms 
+q=title:(men OR dog)
+curl -s http://localhost:8080/movies/search/query?q=title:\(men%20OR%20dog\) | jq -r '.[].title'
+The Shaggy Dog
+Soul Men
+X-Men
+Repo Men
+Mystery Men
+X-Men: Apocalypse
+Children of Men
+The Monuments Men
+Men in Black 3
+All the King's Men
+A Few Good Men
+Men of Honor
+Men in Black II
+Men in Black
+X-Men: First Class
+X-Men Origins: Wolverine
+X-Men: The Last Stand
+X-Men: Days of Future Past
+Same but restricted to only comedies 
+q=title:(men OR dog) AND genres:comedy
+$ curl -s http://localhost:8080/movies/search/query?q=title:\(men%20OR%20dog\)%20AND%20genres:comedy | jq -r '.[].title'
+The Shaggy Dog
+Diary of a Wimpy Kid: Dog Days
+Soul Men
+Mystery Men
+Men in Black 3
+Men in Black II
+Men in Black
+The Men Who Stare at Goats
+At this point one can use any Lucene inline query to search through data. This only allows a subset of capabilities provided by Elasticsearch but using the same mechanism you could, for example, add a method to take a json query from a request body and forward it to Elasticsearch instead of using an inline query param, thus unlocking all potential.
+
+But we haven’t finished yet, indeed we have all our CRUD endpoints and search ones, but search results do not exhibit any hypermedia links so it is not HATEOAS compliant anymore, also our paging information are lost…
+
+6. Handling hypermedia links in custom methods
+To get paging information and links again it is very simple, spring can instantiate a PageResourceAssembler for you at runtime. All you need to do is to inject it where you need it. That assembler class will convert a Page<Movie> to a PagedResource and take care of all paging links for you, sweat right ?
+
+
+MovieController.java [Paging HATEOAS]
+If you try searching for data again you will see that the response now includes all needed paging hypermedia links
+
+(...)
+            {
+                "title": "Captain America: The Winter Soldier",
+                "budget": 170000000,
+                "overview": "...",
+                "genres": [
+                    "Action",
+                    "Adventure",
+                    "Science Fiction"
+                ],
+                "keywords": [
+                    "washington d.c.",
+                    "marvel cinematic universe",
+                    "shield",
+                    "3d",
+                    "based on comic book",
+                    "future",
+                    "aftercreditsstinger",
+                    "superhero",
+                    "captain america",
+                    "political thriller",
+                    "marvel comic",
+                    "duringcreditsstinger"
+                ]
+            }
+        ]
+    },
+    "_links": {
+        "first": {
+            "href": "http://localhost:8080/movies/search/query?q=%2A&page=0&size=20"
+        },
+        "self": {
+            "href": "http://localhost:8080/movies/search/query?q=%2A&page=0&size=20"
+        },
+        "next": {
+            "href": "http://localhost:8080/movies/search/query?q=%2A&page=1&size=20"
+        },
+        "last": {
+            "href": "http://localhost:8080/movies/search/query?q=%2A&page=240&size=20"
+        }
+    },
+    "page": {
+        "size": 20,
+        "totalElements": 4804,
+        "totalPages": 241,
+        "number": 0
+    }
+}
+But if you look at the returned book entries you can see that they are still missing links. That is becausePagedResourceAssembler only deals with the page data, collection items remain the same. We have to explicitly provide a MovieResourceAssembler and here spring can't do much for us so let’s create that class ourself and use it in the page assembling process.
+
+
+MovieResourceAssembler.java
+
+MovieController.java [final]
+You can now try our search endpoint again to confirm that all books also includes hypermedia links.
+
+Conclusion
+As we have seen here, it is very easy and extremely fast to build up a simple backend API to provide REST endpoints with advanced search features when delegating them to Elasticsearch. We barely scratched the surface as spring-data-rest, spring-data-elasticsearch and more widely, the whole spring ecosystem, provides thousands of functionalities and extension points.
+Furthermore, as we said earlier, we used the embedded version of Elasticsearch but using an external one is just as easy as setting up a hostname parameter in the application properties, so you can also use this example to provide an API over an existing Elasticsearch cluster.
