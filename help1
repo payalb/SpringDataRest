@@ -1,0 +1,395 @@
+Table of contents
+Spring Data REST
+Basics
+Object creation
+Object linking
+Link removal
+Pagination
+Validation
+Conclusion
+1. Spring Data REST
+When you want to develop quick and straightforward REST API for some entities (with relations), you should check Spring-data-rest module. It’s built on top of Spring-data module which makes hypermedia-driven REST web services on top of Spring data repositories. It uses HAL as media type which makes consistent and easy way to hyperlink between all objects. If you are not familiar with this format, you can check Spring HATEOAS.
+
+2. Basics
+Let’s consider a spring-boot project which is so easy to do.
+
+Maven dependencies:
+
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-rest</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+</dependencies>
+view rawpom.xml hosted with ❤ by GitHub
+Please note that for shortage purpose we used project Lombok for @Getter and @Setter. If you are not familiar with it, please check this out!
+
+Spring boot main class
+@SpringBootApplication
+public class SpringDataRestApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(SpringDataRestApplication.class, args);
+    }
+}
+view rawSpringDataRestApplication.java hosted with ❤ by GitHub
+Application.properties
+spring.h2.console.enabled=true
+logging.level.org.hibernate.SQL=debug
+spring.jpa.hibernate.ddl-auto=create-drop
+view rawapplication.properties hosted with ❤ by GitHub
+It will be used to say spring-boot that we want to setup Hibernate with H2.
+
+Models
+@Getter
+@Setter
+@Entity
+public class Owner {
+
+    @Id
+    @GeneratedValue
+    private long id;
+
+    @Column
+    private String firstName;
+
+    @Column
+    private String lastName;
+
+    @Column
+    private String telephone;
+
+    @OneToMany(cascade = CascadeType.ALL, mappedBy = "owner")
+    private Set<Pet> pets;
+}
+view rawOwner.java hosted with ❤ by GitHub
+
+@Getter
+@Setter
+@Entity
+public class Pet {
+
+    @Id
+    @GeneratedValue
+    private long id;
+
+    @Column
+    private String name;
+
+    @Enumerated(EnumType.STRING)
+    private PetType type;
+
+    @ManyToOne
+    @JoinColumn(name = "owner_id")
+    @RestResource(path = "petOwners", rel = "owner")
+    private Owner owner;
+}
+view rawPet.java hosted with ❤ by GitHub
+
+public enum PetType {
+    CAT,DOG,HAMSTER
+}
+view rawPetType.java hosted with ❤ by GitHub
+Is the @RestResource required annotation? No! If you don’t need anything more special that ‘/pet/owner’ endpoint, you do not have to write it. It may be used for customising the endpoint.
+
+Repositories
+public interface PetRepository extends CrudRepository<Pet, Long> {
+}
+view rawPetRepository.java hosted with ❤ by GitHub
+
+public interface OwnerRepository extends CrudRepository<Owner, Long> {
+}
+view rawOwnerRepository.java hosted with ❤ by GitHub
+What did we do? One project, two model classes, one relation, two interfaces without any implementation. You may ask what more? That’s it and it works. 🙂 You may ask what we have? Full CRUD REST API for Owner and Pet entity with linking API.
+
+3. Object creation
+We did not preload database so let’s create a Pet.
+curl -H "Content-Type: application/json" -X POST http://localhost:8080/pets -d "{\"name\": \"John’s cat\",	\"type\": \"CAT\"}"
+view rawPet creation - CURL hosted with ❤ by GitHub
+Response
+{
+  "name" : "John’s cat",
+  "type" : "CAT",
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/pets/1"
+    },
+    "pet" : {
+      "href" : "http://localhost:8080/pets/1"
+    },
+    "owner" : {
+      "href" : "http://localhost:8080/pets/1/petOwners"
+    }
+  }
+}
+view rawPet creation response hosted with ❤ by GitHub
+And Owner
+curl -H "Content-Type: application/json" -X POST http://localhost:8080/owners -d "{ \"firstName\": \"John\", \"lastName\": \"Kennon\", \"telephone\": \"+49-89-636-48018\"}"
+view rawOwner creation - CURL hosted with ❤ by GitHub
+Response
+{
+  "firstName" : "John",
+  "lastName" : "Kennon",
+  "telephone" : "+49-89-636-48018",
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/owners/1"
+    },
+    "owner" : {
+      "href" : "http://localhost:8080/owners/1"
+    },
+    "pets" : {
+      "href" : "http://localhost:8080/owners/1/pets"
+    }
+  }
+}
+view rawOwner creation - response hosted with ❤ by GitHub
+4. Object linking
+So let’s add pet to owner.
+curl -i -X PUT -d "http://localhost:8080/owners/1"  -H "Content-Type:text/uri-list" http://localhost:8080/pets/1/petOwners
+view rawPet-owner linking - CURL hosted with ❤ by GitHub
+And check if the association was persisted.
+
+From Pet’s side, let’s retrieve an owner/
+curl -i -X GET http://localhost:8080/pets/1/petOwners
+view rawPet owner link retrieval - CURL hosted with ❤ by GitHub
+Response
+{
+  "firstName" : "John",
+  "lastName" : "Kennon",
+  "telephone" : "+49-89-636-48018",
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/owners/1"
+    },
+    "owner" : {
+      "href" : "http://localhost:8080/owners/1"
+    },
+    "pets" : {
+      "href" : "http://localhost:8080/owners/1/pets"
+    }
+  }
+}
+view rawPet owner link retrieval - response hosted with ❤ by GitHub
+And from Owner’s side, we can retrieve pets.
+curl -i -X GET http://localhost:8080/owners/1/pets
+view rawOwner pet link retrieval - CURL hosted with ❤ by GitHub
+Response
+{
+  "_embedded" : {
+    "pets" : [ {
+      "name" : "John cat",
+      "type" : "CAT",
+      "_links" : {
+        "self" : {
+          "href" : "http://localhost:8080/pets/1"
+        },
+        "pet" : {
+          "href" : "http://localhost:8080/pets/1"
+        },
+        "owner" : {
+          "href" : "http://localhost:8080/pets/1/petOwners"
+        }
+      }
+    } ]
+  },
+  "_links" : {
+    "self" : {
+      "href" : "http://localhost:8080/owners/1/pets"
+    }
+  }
+}
+view rawOwner pet link retrieval - response hosted with ❤ by GitHub
+5. Link removal
+We may also remove an association with:
+curl -i -X DELETE http://localhost:8080/pets/1/petOwners
+view rawLink removal - CURL hosted with ❤ by GitHub
+6. Pagination
+But what if we will have a simple application with many records? We may need some pagination. We may use javax.persistence.Query with bound pagination or Criteria API but it’s just a boilerplate code which repeats and repeats. With Spring-data-rest what we only need is… interface.
+
+Let’s change our PetRepository.
+public interface PetRepository extends PagingAndSortingRepository<Pet, Long> {
+}
+view rawPetRepository.java hosted with ❤ by GitHub
+In the meantime let’s load some records into the database to check the pagination.
+
+Data.sql
+INSERT INTO PET (name, type) VALUES ('Kiddo', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Alliebear', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Baboo', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('Babe', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Bitsy', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Big Daddy', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('Button', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Buster', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Bumpa', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('Daisy', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Dearestone', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Darling', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('Hero', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Haven', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Goldie', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('Hunky', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Huggalump', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Hunk', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('Joy', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Jujube', 'DOG');
+INSERT INTO PET (name, type) VALUES ('Killer', 'HAMSTER');
+INSERT INTO PET (name, type) VALUES ('King', 'CAT');
+INSERT INTO PET (name, type) VALUES ('Mamacita', 'DOG');
+view rawdata.sql hosted with ❤ by GitHub
+Pagination request
+curl -i -X GET http://localhost:8080/pets?page=1&size=3
+view rawRequest with pagination - CURL hosted with ❤ by GitHub
+Response
+{
+  "_embedded" : {
+    "pets" : [ {
+      "name" : "Babe",
+      "type" : "CAT",
+      "_links" : {
+        "self" : {
+          "href" : "http://localhost:8080/pets/4"
+        },
+        "pet" : {
+          "href" : "http://localhost:8080/pets/4"
+        },
+        "owner" : {
+          "href" : "http://localhost:8080/pets/4/petOwners"
+        }
+      }
+    }, {
+      "name" : "Bitsy",
+      "type" : "DOG",
+      "_links" : {
+        "self" : {
+          "href" : "http://localhost:8080/pets/5"
+        },
+        "pet" : {
+          "href" : "http://localhost:8080/pets/5"
+        },
+        "owner" : {
+          "href" : "http://localhost:8080/pets/5/petOwners"
+        }
+      }
+    }, {
+      "name" : "Big Daddy",
+      "type" : "HAMSTER",
+      "_links" : {
+        "self" : {
+          "href" : "http://localhost:8080/pets/6"
+        },
+        "pet" : {
+          "href" : "http://localhost:8080/pets/6"
+        },
+        "owner" : {
+          "href" : "http://localhost:8080/pets/6/petOwners"
+        }
+      }
+    } ]
+  },
+  "_links" : {
+    "first" : {
+      "href" : "http://localhost:8080/pets?page=0&size=3"
+    },
+    "prev" : {
+      "href" : "http://localhost:8080/pets?page=0&size=3"
+    },
+    "self" : {
+      "href" : "http://localhost:8080/pets"
+    },
+    "next" : {
+      "href" : "http://localhost:8080/pets?page=2&size=3"
+    },
+    "last" : {
+      "href" : "http://localhost:8080/pets?page=7&size=3"
+    },
+    "profile" : {
+      "href" : "http://localhost:8080/profile/pets"
+    },
+    "search" : {
+      "href" : "http://localhost:8080/pets/search"
+    }
+  },
+  "page" : {
+    "size" : 3,
+    "totalElements" : 23,
+    "totalPages" : 8,
+    "number" : 1
+  }
+}
+view rawPagination response hosted with ❤ by GitHub
+7. Validation
+Let’s consider validation using org.springframework.validation.Validator. To make it fully work, we need to: implement validator, register it on Spring Data REST event.
+
+There are eight different data REST events:
+
+BeforeCreateEvent
+AfterCreateEvent
+BeforeSaveEvent
+AfterSaveEvent
+BeforeLinkSaveEvent
+AfterLinkSaveEvent
+BeforeDeleteEvent
+AfterDeleteEvent
+Validator implementation
+public class PetValidator implements Validator {
+    @Override
+    public boolean supports(Class<?> clazz) {
+        return Pet.class.equals(clazz);
+    }
+
+    @Override
+    public void validate(Object object, Errors errors) {
+        final Pet pet = (Pet) object;
+        if (StringUtils.isEmpty(pet.getName())) {
+            errors.rejectValue("name", "name.empty");
+        }
+    }
+}
+view rawPetValidator.java hosted with ❤ by GitHub
+Resource bundle (messages.properties)
+name.empty=Name is empty
+view rawmessages.properties hosted with ❤ by GitHub
+Validator registration on “beforeCreate” event
+@SpringBootApplication
+public class SpringDataRestApplication extends RepositoryRestConfigurerAdapter {
+
+    public static void main(String[] args) {
+        SpringApplication.run(SpringDataRestApplication.class, args);
+    }
+
+    @Override
+    public void configureValidatingRepositoryEventListener(ValidatingRepositoryEventListener validatingListener) {
+        validatingListener.addValidator("beforeCreate", new PetValidator());
+    }
+}
+view rawSpringDataRestApplication.java hosted with ❤ by GitHub
+Validation check
+curl -H "Content-Type: application/json" -X POST http://localhost:8080/pets -d "{\"name\": \"\",\"type\": \"CAT\"}"
+view rawInvalid pet creation request - CURL hosted with ❤ by GitHub
+Response
+{  
+   "errors":[  
+      {  
+         "entity":"Pet",
+         "property":"name",
+         "invalidValue":"",
+         "message":"Name is empty"
+      }
+   ]
+}
+view rawInvalid pet creation response hosted with ❤ by GitHub
+8. Conclusion
+As you can see, you can save your time by learning Spring Data REST. The code is clean and readable.
+
+Be aware because as every generic solution – it’s not perfect. You can see the JIRA for issues. For more information check the Spring Data REST documentation.
