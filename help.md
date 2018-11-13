@@ -17,6 +17,8 @@ An excerpt is a projection that is applied to a resource collection automaticall
 @RepositoryRestResource(excerptProjection = NoPassword.class)
 interface PersonRepository extends CrudRepository {}
 
+https://faithfull.me/overriding-spring-data-rest-repositories/
+
 Validation is achived using a registered org.springframework.validation.Validator instance:
 a. beforeCreatePersonValidator -> prefix the bean name with the Data REST event name
 b. assigning Validators manually -> override RepositoryRestMvcConfiguration.configureValidatingRepositoryEventListener and add the validators
